@@ -8,12 +8,23 @@ import {
   Text,
   useColorScheme,
   TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  ScrollView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import {
+  processTransaction,
+  TransactionResponse,
+} from "../../services/openaiService";
+import { saveTransactionData } from "../../services/supabaseService";
 
 export default function HomeScreen() {
   const [inputText, setInputText] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [assumptions, setAssumptions] = useState<string[]>([]);
+  const [showAssumptions, setShowAssumptions] = useState(false);
   const colorScheme = useColorScheme();
   const router = useRouter();
 
@@ -29,13 +40,44 @@ export default function HomeScreen() {
     button: isDark ? "#3b82f6" : "#2563eb",
     buttonText: "#ffffff",
     iconButton: isDark ? "#3b82f6" : "#2563eb",
+    assumptionsBox: isDark ? "#1e1e1e" : "#ffffff",
+    assumptionsBorder: isDark ? "#333333" : "#e0e0e0",
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (inputText.trim()) {
-      console.log("Processing transaction:", inputText);
-      // Here you would call your NLP processing function
-      setInputText("");
+      try {
+        setIsLoading(true);
+        setAssumptions([]);
+        setShowAssumptions(false);
+
+        // Get transaction data from OpenAI
+        const result: TransactionResponse = await processTransaction(inputText);
+        console.log("Transaction processed:", result);
+
+        // Save data to Supabase
+        await saveTransactionData(result.tables);
+
+        // Show success message and assumptions
+        Alert.alert(
+          "Transaction Saved",
+          `Successfully saved to ${result.tables.map((t) => t.name).join(", ")}`
+        );
+
+        // Set assumptions to display
+        setAssumptions(result.assumptions);
+        setShowAssumptions(true);
+
+        setInputText("");
+      } catch (error) {
+        console.error("Error:", error);
+        Alert.alert(
+          "Error",
+          "Failed to process transaction. Please try again."
+        );
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -54,38 +96,74 @@ export default function HomeScreen() {
       </TouchableOpacity>
 
       <View style={styles.innerContainer}>
-        <View style={styles.contentWrapper}>
-          <Text style={[styles.title, { color: theme.text }]}>Obelus</Text>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.contentWrapper}>
+            <Text style={[styles.title, { color: theme.text }]}>Obelus</Text>
 
-          <TextInput
-            style={[
-              styles.input,
-              {
-                backgroundColor: theme.inputBg,
-                borderColor: theme.inputBorder,
-                color: theme.text,
-              },
-            ]}
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder="Enter your transaction..."
-            placeholderTextColor={theme.placeholder}
-            onSubmitEditing={handleSubmit}
-          />
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: theme.inputBg,
+                  borderColor: theme.inputBorder,
+                  color: theme.text,
+                },
+              ]}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Enter your transaction..."
+              placeholderTextColor={theme.placeholder}
+              onSubmitEditing={handleSubmit}
+              editable={!isLoading}
+            />
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.button,
-              { backgroundColor: theme.button },
-              pressed && { opacity: 0.8 },
-            ]}
-            onPress={handleSubmit}
-          >
-            <Text style={[styles.buttonText, { color: theme.buttonText }]}>
-              Enter
-            </Text>
-          </Pressable>
-        </View>
+            <Pressable
+              style={({ pressed }) => [
+                styles.button,
+                { backgroundColor: theme.button },
+                pressed && { opacity: 0.8 },
+                isLoading && { opacity: 0.7 },
+              ]}
+              onPress={handleSubmit}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Text style={[styles.buttonText, { color: theme.buttonText }]}>
+                  Enter
+                </Text>
+              )}
+            </Pressable>
+
+            {showAssumptions && assumptions.length > 0 && (
+              <View
+                style={[
+                  styles.assumptionsContainer,
+                  {
+                    backgroundColor: theme.assumptionsBox,
+                    borderColor: theme.assumptionsBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.assumptionsTitle, { color: theme.text }]}>
+                  AI Assumptions:
+                </Text>
+                {assumptions.map((assumption, index) => (
+                  <Text
+                    key={index}
+                    style={[styles.assumptionText, { color: theme.text }]}
+                  >
+                    • {assumption}
+                  </Text>
+                ))}
+              </View>
+            )}
+          </View>
+        </ScrollView>
       </View>
     </View>
   );
@@ -95,6 +173,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingTop: Platform.OS === "ios" ? 50 : 30,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingBottom: 40,
   },
   graphButton: {
     position: "absolute",
@@ -117,13 +200,13 @@ const styles = StyleSheet.create({
   },
   innerContainer: {
     flex: 1,
-    justifyContent: "center", // Center content vertically
-    alignItems: "center", // Center content horizontally
+    justifyContent: "center",
+    alignItems: "center",
     paddingHorizontal: 20,
   },
   contentWrapper: {
     width: "100%",
-    maxWidth: 400, // More suitable for focused input
+    maxWidth: 400,
     alignItems: "center",
   },
   title: {
@@ -151,5 +234,22 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: "600",
+  },
+  assumptionsContainer: {
+    width: "100%",
+    marginTop: 24,
+    borderRadius: 8,
+    padding: 16,
+    borderWidth: 1,
+  },
+  assumptionsTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 10,
+  },
+  assumptionText: {
+    fontSize: 14,
+    marginBottom: 6,
+    lineHeight: 20,
   },
 });
